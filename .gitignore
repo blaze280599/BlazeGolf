@@ -1,0 +1,12 @@
+# Game-derived data (decompiled metadata, headers, stub DLLs) — not ours to redistribute
+dump/
+BallMovement.txt
+
+# Third-party tool downloads (Il2CppDumper, BepInEx)
+tools/
+
+# Build output
+bin/
+obj/
+*.user
+.vs/
