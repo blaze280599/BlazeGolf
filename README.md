@@ -1,5 +1,9 @@
 # BlazeGolf
 
+<img width="2471" height="1439" alt="Screenshot 2026-10-22 171217" src="https://github.com/user-attachments/assets/83d3476c-5c64-483b-981a-02be6b4c85fc" />
+<img width="2559" height="1439" alt="Screenshot 2026-10-22 165052" src="https://github.com/user-attachments/assets/87c74e74-576a-4f61-ad2e-0f6992665bb6" />
+
+
 A BepInEx 6 (IL2CPP) mod for **Golf With Your Friends** that predicts where your shot will go and can
 solve for a shot into the hole.
 
