@@ -21,6 +21,7 @@ public class ShotSolver
     const int RefineCandidates = 3;
     const int TimingSteps = 5;
     const int TwoShotCandidates = 10;
+    const int MaxCentreCandidates = 6;
     const float TimingStep = 0.075f;
 
     public State Status { get; private set; } = State.Idle;
@@ -40,6 +41,9 @@ public class ShotSolver
     public float TargetLaunch { get; private set; }
     public float WindowHalf { get; private set; }
     public List<float> Periods { get; private set; } = new();
+
+    // True when even the best holing shot only sinks at its exact aim and power.
+    public bool Fragile { get; private set; }
 
     struct Result
     {
@@ -98,6 +102,7 @@ public class ShotSolver
         Timed = false;
         Periods = new List<float>();
         TwoShot = false;
+        Fragile = false;
         _stage2 = false;
         _all.Clear();
         _clock.Restart();
@@ -256,11 +261,18 @@ public class ShotSolver
         for (int i = 0; i < 12; i++) Add(yaw0, _min + (i + 0.5f) / 12f * range);
         Launch(); while (_sim.BatchActive) yield return true;
 
-        // 2. Coarse grid for banks and blocked lines.
-        if (!BestHoled)
+        // A straight shot with several neighbouring powers that also sink is forgiving enough;
+        // otherwise keep searching so banks with more slack can compete.
+        int run = 0, bestRun = 0;
+        for (int i = 0; i < 28; i++) { run = _results[i].Holed ? run + 1 : 0; bestRun = Mathf.Max(bestRun, run); }
+        bool directRobust = bestRun >= 3;
+
+        // 2. Coarse grid for banks and blocked lines (all of it: the first holing shot found is
+        //    often a fragile one).
+        if (!directRobust)
         {
             Phase = "grid";
-            for (int a = 0; a < GridYaws && !BestHoled; a++)
+            for (int a = 0; a < GridYaws; a++)
             {
                 foreach (float f in GridPowers)
                     Add(yaw0 + a * 360f / GridYaws, _min + f * range);
@@ -326,26 +338,48 @@ public class ShotSolver
             if (!TwoShot) Phase = "no hole-in-one or two-shot plan found";
         }
 
-        // 4. Centre a holing shot in the range of aims and powers that still hole, then verify.
+        // 4. Several holing shots may exist. Measure how much power/aim slack each has (one row of
+        //    powers and one of aims through it), keep the most forgiving one and centre it in its
+        //    tolerance window, then verify.
         if (BestHoled)
         {
             Phase = "centre";
-            float by = BestYaw, bp = BestPower;
             float pStep = 0.008f * range, yStep = 0.2f;
-            const int K = 6;
-            for (int k = -K; k <= K; k++) Add(by, bp + k * pStep);
-            for (int k = -K; k <= K; k++) if (k != 0) Add(by + k * yStep, bp);
-            Launch(); while (_sim.BatchActive) yield return true;
+            const int K = 4, Per = 4 * K + 1;
+            var holedCands = HoledCandidates(MaxCentreCandidates);
+            float cy = BestYaw, cp = BestPower;
+            int bestScore = -1, pLo = 0, pHi = 0, yLo = 0, yHi = 0;
+            for (int c0 = 0; c0 < holedCands.Count; c0 += 2)
+            {
+                int n = Mathf.Min(2, holedCands.Count - c0);
+                for (int c = 0; c < n; c++)
+                {
+                    var h = holedCands[c0 + c];
+                    for (int k = -K; k <= K; k++) Add(h.Yaw, h.Power + k * pStep);
+                    for (int k = -K; k <= K; k++) if (k != 0) Add(h.Yaw + k * yStep, h.Power);
+                }
+                Launch(); while (_sim.BatchActive) yield return true;
 
-            // _results: indices 0..2K are powers (k = -K..K), then yaws without k = 0.
-            int pLo = 0, pHi = 0, yLo = 0, yHi = 0;
-            while (pLo > -K && _results[K + pLo - 1].Holed) pLo--;
-            while (pHi < K && _results[K + pHi + 1].Holed) pHi++;
-            int YawIndex(int k) => 2 * K + 1 + (k < 0 ? k + K : k + K - 1);
-            while (yLo > -K && _results[YawIndex(yLo - 1)].Holed) yLo--;
-            while (yHi < K && _results[YawIndex(yHi + 1)].Holed) yHi++;
-            float cp = bp + 0.5f * (pLo + pHi) * pStep;
-            float cy = by + 0.5f * (yLo + yHi) * yStep;
+                for (int c = 0; c < n; c++)
+                {
+                    // Per candidate: K*2+1 powers (k = -K..K), then 2K aims without k = 0.
+                    int b = c * Per;
+                    if (!_results[b + K].Holed) continue;
+                    int YawIndex(int k) => b + 2 * K + 1 + (k < 0 ? k + K : k + K - 1);
+                    int pl = 0, ph = 0, yl = 0, yh = 0;
+                    while (pl > -K && _results[b + K + pl - 1].Holed) pl--;
+                    while (ph < K && _results[b + K + ph + 1].Holed) ph++;
+                    while (yl > -K && _results[YawIndex(yl - 1)].Holed) yl--;
+                    while (yh < K && _results[YawIndex(yh + 1)].Holed) yh++;
+                    int score = (ph - pl + 1) * (yh - yl + 1);
+                    if (score <= bestScore) continue;
+                    bestScore = score;
+                    var h = holedCands[c0 + c];
+                    cp = h.Power + 0.5f * (pl + ph) * pStep;
+                    cy = h.Yaw + 0.5f * (yl + yh) * yStep;
+                    pLo = pl; pHi = ph; yLo = yl; yHi = yh;
+                }
+            }
 
             Add(cy, cp);
             Launch(); while (_sim.BatchActive) yield return true;
@@ -356,11 +390,15 @@ public class ShotSolver
                 BestPoints.Clear();
                 BestPoints.AddRange(_shotPool[0].Points);
             }
-            Phase = $"centred (power ±{(pHi - pLo) * pStep / 2f / range * 100f:0.#}%, aim ±{(yHi - yLo) * yStep / 2f:0.##}°)";
+            Phase = $"centred, best of {holedCands.Count} holing lines (power ±{(pHi - pLo) * pStep / 2f / range * 100f:0.#}%, aim ±{(yHi - yLo) * yStep / 2f:0.##}°)"
+                    + (bestScore <= 2 ? " — FRAGILE" : "");
+            Fragile = bestScore <= 2;
 
             // 5. With moving obstacles the shot only works at certain moments: replay it with the
             //    launch shifted earlier/later to find how wide that window is, and aim for its middle.
             if (_sim.HasMovingObstacles)
+                Periods = _sim.PeriodsNear(BestPoints, 1f);
+            if (Periods.Count > 0)
             {
                 string centred = Phase;
                 Phase = "timing";
@@ -378,11 +416,28 @@ public class ShotSolver
                 while (hi < TimingSteps && holed[TimingSteps + hi + 1]) hi++;
                 TargetLaunch = _launchTime + 0.5f * (lo + hi) * TimingStep;
                 WindowHalf = 0.5f * (hi - lo) * TimingStep + 0.5f * TimingStep;
-                Periods = _sim.PeriodsNear(BestPoints, 1f);
                 Timed = true;
                 Phase = $"{centred}, timing window ±{WindowHalf:0.###}s, {Periods.Count} obstacles on the path";
             }
         }
+    }
+
+    // Distinct holing shots found so far (different aim or power), gentlest first.
+    List<Result> HoledCandidates(int count)
+    {
+        var holed = _all.FindAll(r => r.Holed);
+        holed.Sort((a, b) => a.Power.CompareTo(b.Power));
+        var picked = new List<Result>();
+        foreach (var r in holed)
+        {
+            bool distinct = true;
+            foreach (var p in picked)
+                if (Mathf.Abs(Mathf.DeltaAngle(p.Yaw, r.Yaw)) < 1f && Mathf.Abs(p.Power - r.Power) < 0.04f * (_max - _min)) { distinct = false; break; }
+            if (!distinct) continue;
+            picked.Add(r);
+            if (picked.Count == count) break;
+        }
+        return picked;
     }
 
     // Rest positions of earlier shots, best second-shot spots first: a clear rolling line to the

@@ -414,6 +414,8 @@ public class Predictor : MonoBehaviour
                 string result = _solver.BestHoled ? "holes out"
                     : _solver.TwoShot ? "no hole-in-one; shot 1 of a 2-shot plan (shot 2 is solved automatically when the ball stops)"
                     : $"no holing shot found, closest {_solver.BestCost:0.00} m";
+                if (_solver.BestHoled && _solver.Fragile)
+                    result += " (FRAGILE: only the exact aim and power sink it — press H to re-solve or line it up carefully)";
                 SetStatus($"Auto-aim locked: {result} — power {_lockPower / _ball.m_maxForce.Value * 100f:0.#}%. Click to shoot without moving the mouse. H to release.", 30f);
                 Plugin.Logger.LogInfo($"Auto-aim solved in {_solver.ElapsedMs:0}ms wall ({_sim.StatMs:0}ms sim): {_solver.Evaluations} shots, {_solver.Batches} batches, " +
                     $"{_sim.StatSimulateCalls} Simulate calls ({_sim.StatMs * 1000.0 / Mathf.Max(1, _sim.StatSimulateCalls):0}us each), {_sim.StatBallSteps} ball-steps; " +
@@ -425,7 +427,7 @@ public class Predictor : MonoBehaviour
         if (_locked && _ball != null && _ball.IsBallIdle)
         {
             if (_timed) UpdateCountdown();
-            else if (_sim.HasMovingObstacles && _solver.BestHoled)
+            else if (_liveCue)
                 SetStatus(_doneGoesIn ? ">>> GOES IN — shoot now <<<" : "Auto-aim locked — waiting for the obstacles to line up…", 1f);
         }
 
@@ -556,7 +558,7 @@ public class Predictor : MonoBehaviour
     const float MinLeadTime = 1.5f;
     const int MaxCycleSearch = 60;
 
-    bool _timed;
+    bool _timed, _liveCue;
     float _target, _windowHalf, _nextLaunch;
     readonly List<float> _periods = new();
     string _countdown;
@@ -566,8 +568,11 @@ public class Predictor : MonoBehaviour
     void SetUpTiming()
     {
         _timed = false;
+        _liveCue = false;
         _countdown = null;
         if (!_solver.Timed || !_solver.BestHoled) return;
+        // Obstacles on the path but no schedule possible: fall back to watching the live line.
+        _liveCue = true;
         _periods.Clear();
         foreach (float p in _solver.Periods)
         {
@@ -576,10 +581,11 @@ public class Predictor : MonoBehaviour
             foreach (float q in _periods) if (Mathf.Abs(p - q) < 0.01f * q) dup = true;
             if (!dup) _periods.Add(p);
         }
-        if (_periods.Count == 0) return;   // nothing moving near the path: any time works
+        if (_periods.Count == 0) { _liveCue = false; return; }
         _target = _solver.TargetLaunch;
         _windowHalf = _solver.WindowHalf;
         _timed = ScheduleNext(Time.time + MinLeadTime);
+        _liveCue = !_timed;
         Plugin.Logger.LogInfo(_timed
             ? $"Timing: periods [{string.Join(", ", _periods)}]s, window ±{_windowHalf:0.###}s, next launch in {_nextLaunch - Time.time:0.00}s"
             : $"Timing: no common launch moment within {MaxCycleSearch} cycles of [{string.Join(", ", _periods)}]s; using live cue");
