@@ -3,6 +3,8 @@
 <img width="2471" height="1439" alt="Screenshot 2026-10-22 171217" src="https://github.com/user-attachments/assets/83d3476c-5c64-483b-981a-02be6b4c85fc" />
 <img width="2559" height="1439" alt="Screenshot 2026-10-22 165052" src="https://github.com/user-attachments/assets/87c74e74-576a-4f61-ad2e-0f6992665bb6" />
 
+*Note*
+This is quite strong on mostly static courses like Forest, you will get hole-in-1 pretty much every hole
 
 A BepInEx 6 (IL2CPP) mod for **Golf With Your Friends** that predicts where your shot will go and can
 solve for a shot into the hole.
@@ -35,5 +37,3 @@ solve for a shot into the hole.
    (override with `-p:GameDir=...`) and copies the DLL to `BepInEx/plugins/BlazeGolf`.
 
 `NOTES.md` has the reverse-engineering notes on the game's shot and drag logic.
-
-Please only use it where everyone playing knows about it.
